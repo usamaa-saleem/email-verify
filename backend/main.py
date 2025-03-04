@@ -15,6 +15,7 @@ from celery import Celery
 from typing import Dict, Any, List
 import tempfile
 from pydantic import BaseModel
+import shutil
 
 # Configure logging
 logging.basicConfig(
@@ -56,6 +57,13 @@ celery.conf.update(
     result_serializer='json',
     timezone='UTC',
     enable_utc=True,
+    task_default_queue='celery',
+    task_namespace='backend.tasks',
+    task_track_started=True,
+    task_time_limit=3600,  # 1 hour timeout
+    worker_prefetch_multiplier=1,  # Prevent worker from prefetching too many tasks
+    task_acks_late=True,  # Only acknowledge tasks after they're completed
+    task_reject_on_worker_lost=True  # Requeue tasks if worker dies
 )
 
 # Simple rate limiting
@@ -131,17 +139,23 @@ async def validate_single_email(email_data: EmailData):
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
     try:
-        # Create a temporary file in the system's temp directory
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file.filename) as temp_file:
-            content = await file.read()
-            temp_file.write(content)
-            temp_file_path = temp_file.name
+        # Create a temporary file in the uploads directory with unique name
+        temp_file_path = os.path.join(UPLOAD_DIR, f"temp_{int(time.time())}_{file.filename}")
+        
+        # Save the uploaded file
+        with open(temp_file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
         
         # Start the validation task
         task = validate_bulk_emails.delay(temp_file_path)
         
-        return {"task_id": task.id}
+        return {
+            "task_id": task.id,
+            "status": "accepted",
+            "message": "File uploaded and validation started"
+        }
     except Exception as e:
+        logger.error(f"Error in upload_file: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/results/{task_id}")
@@ -150,32 +164,73 @@ async def get_results(task_id: str):
         task_result = AsyncResult(task_id)
 
         if task_result is None:
-            return {"status": "failed", "error": "Task not found"}
+            return {
+                "status": "failed",
+                "error": "Task not found",
+                "state": "NOT_FOUND"
+            }
         
-        if task_result.ready():
-            if task_result.successful():
-                result = task_result.get()
-                if result is None:
-                    return {"status": "failed", "error": "Task result is empty"}
-                return result
-            else:
-                return {"status": "failed", "error": str(task_result.result)}
+        # Handle task failure
+        if task_result.state == "FAILURE":
+            return {
+                "status": "failed",
+                "error": str(task_result.result),
+                "state": "FAILURE"
+            }
+        
+        # Handle task success
+        if task_result.state == "SUCCESS":
+            result = task_result.get()
+            if result is None:
+                return {
+                    "status": "failed",
+                    "error": "Task result is empty",
+                    "state": "SUCCESS"
+                }
+            return {
+                **result,
+                "state": "SUCCESS"
+            }
 
-        # Prevent infinite loops by returning an explicit "waiting" state
+        # Task is still in queue
         if task_result.state == "PENDING":
-            return {"status": "waiting", "message": "Task is still in queue. Try again later."}
+            return {
+                "status": "waiting",
+                "message": "Task is still in queue. Try again later.",
+                "state": "PENDING"
+            }
 
+        # Task has started processing
+        if task_result.state == "STARTED":
+            return {
+                "status": "processing",
+                "message": "Task is in progress",
+                "state": "STARTED"
+            }
+
+        # Task is in progress with progress info
         if task_result.info:
             return {
                 "status": "processing",
                 "current": task_result.info.get("current", 0),
-                "total": task_result.info.get("total", 0)
+                "total": task_result.info.get("total", 0),
+                "state": task_result.state
             }
-        else:
-            return {"status": "processing", "message": "Task is in progress."}
+        
+        # Default processing state
+        return {
+            "status": "processing",
+            "message": "Task is in progress",
+            "state": task_result.state
+        }
 
     except Exception as e:
-        return {"status": "failed", "error": f"Error getting results: {str(e)}"}
+        logger.error(f"Error in get_results: {str(e)}")
+        return {
+            "status": "failed",
+            "error": f"Error getting results: {str(e)}",
+            "state": "ERROR"
+        }
 
 @app.post("/validate-single/")
 async def validate_single_email(email: str = Form(...)):
@@ -196,10 +251,22 @@ async def health_check():
     """
     Health check endpoint to verify the API is running.
     """
-    return {
-        "status": "healthy",
-        "services": {
-            "api": "running",
-            "celery": "running" if celery_app.control.inspect().active() else "not running"
+    try:
+        celery_status = "running" if celery_app.control.inspect().active() else "not running"
+        return {
+            "status": "healthy",
+            "services": {
+                "api": "running",
+                "celery": celery_status
+            }
         }
-    }
+    except Exception as e:
+        logger.error(f"Health check error: {str(e)}")
+        return {
+            "status": "unhealthy",
+            "services": {
+                "api": "running",
+                "celery": "error"
+            },
+            "error": str(e)
+        }
