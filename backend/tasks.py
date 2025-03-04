@@ -1,5 +1,5 @@
 from celery import Celery
-from utils import EmailValidator
+from .utils import EmailValidator
 import pandas as pd
 import time
 import logging
