@@ -14,10 +14,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize Celery
-celery = Celery('tasks', broker=os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
+celery_app = Celery('tasks', broker=os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
+
 
 # Configure Celery
-celery.conf.update(
+celery_app.conf.update(
     task_serializer='json',
     accept_content=['json'],
     result_serializer='json',
@@ -211,7 +212,7 @@ def validate_email(email: str) -> Dict[str, Any]:
             "message": error_message
         }
 
-@celery.task
+@celery_app.task
 def validate_bulk_emails(file_path: str) -> Dict[str, Any]:
     """Validate multiple email addresses from a file."""
     try:
