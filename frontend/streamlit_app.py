@@ -20,7 +20,7 @@ st.set_page_config(
 
 
 
-BACKEND_URL = os.getenv("BACKEND_URL", "https://your-render-backend-url.onrender.com")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://email-verify-backend-oayu.onrender.com")
 
 # Add custom CSS
 st.markdown("""
