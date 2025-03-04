@@ -132,13 +132,14 @@ async def validate_single_email(email_data: EmailData):
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
     try:
-        # Save the uploaded file temporarily
-        with open(f"temp_{file.filename}", "wb") as buffer:
+        # Create a temporary file in the system's temp directory
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file.filename) as temp_file:
             content = await file.read()
-            buffer.write(content)
+            temp_file.write(content)
+            temp_file_path = temp_file.name
         
         # Start the validation task
-        task = validate_bulk_emails.delay(f"temp_{file.filename}")
+        task = validate_bulk_emails.delay(temp_file_path)
         
         return {"task_id": task.id}
     except Exception as e:
