@@ -3,9 +3,9 @@ import pandas as pd
 import aiofiles
 import os
 from celery.result import AsyncResult
-from tasks import validate_bulk_emails, celery_app, validate_email
+from .tasks import validate_bulk_emails, celery_app, validate_email
 from fastapi.responses import JSONResponse
-from utils import email_validator, EmailValidator
+from .utils import email_validator, EmailValidator
 from fastapi.middleware.cors import CORSMiddleware
 import time
 from datetime import datetime, timedelta
