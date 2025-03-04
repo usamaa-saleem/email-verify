@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize Celery with Redis URL from environment variable
-celery_app = Celery('tasks', broker=os.getenv('REDIS_URL') , backend=os.getenv('REDIS_URL'))
+celery_app = Celery('tasks', broker=os.getenv('REDIS_URL'), backend=os.getenv('REDIS_URL'))
 
 # Configure Celery
 celery_app.conf.update(
@@ -26,20 +26,24 @@ celery_app.conf.update(
     task_default_queue='celery',
     task_namespace='backend.tasks',
     task_track_started=True,
-    task_time_limit=3600  # 1 hour timeout
+    task_time_limit=3600,  # 1 hour timeout
+    worker_prefetch_multiplier=1,  # Prevent worker from prefetching too many tasks
+    task_acks_late=True,  # Only acknowledge tasks after they're completed
+    task_reject_on_worker_lost=True  # Requeue tasks if worker dies
 )
 
 # [Keep all the existing validation functions: check_disposable_domain, check_role_based_email, etc.]
 
-@celery_app.task(name='backend.tasks.validate_bulk_emails')
-def validate_bulk_emails(file_path: str) -> Dict[str, Any]:
+@celery_app.task(name='backend.tasks.validate_bulk_emails', bind=True)
+def validate_bulk_emails(self, file_path: str) -> Dict[str, Any]:
     """Validate multiple email addresses from a file."""
     try:
         # Ensure file exists
         if not os.path.exists(file_path):
             return {
                 "status": "failed",
-                "error": f"File not found at path: {file_path}"
+                "error": f"File not found at path: {file_path}",
+                "state": "FAILURE"
             }
 
         # Read the file
@@ -49,7 +53,8 @@ def validate_bulk_emails(file_path: str) -> Dict[str, Any]:
                 if 'email' not in df.columns:
                     return {
                         "status": "failed",
-                        "error": "CSV file must contain an 'email' column"
+                        "error": "CSV file must contain an 'email' column",
+                        "state": "FAILURE"
                     }
                 emails = df['email'].tolist()
             else:
@@ -58,13 +63,15 @@ def validate_bulk_emails(file_path: str) -> Dict[str, Any]:
         except Exception as e:
             return {
                 "status": "failed",
-                "error": f"Error reading file: {str(e)}"
+                "error": f"Error reading file: {str(e)}",
+                "state": "FAILURE"
             }
         
         if not emails:
             return {
                 "status": "failed",
-                "error": "No email addresses found in the file"
+                "error": "No email addresses found in the file",
+                "state": "FAILURE"
             }
         
         total_emails = len(emails)
@@ -74,10 +81,14 @@ def validate_bulk_emails(file_path: str) -> Dict[str, Any]:
         start_time = time.time()
         
         for i, email in enumerate(emails):
-            # Update progress
-            validate_bulk_emails.update_state(
+            # Update progress using self instead of task name
+            self.update_state(
                 state='PROGRESS',
-                meta={'current': i, 'total': total_emails}
+                meta={
+                    'current': i,
+                    'total': total_emails,
+                    'status': 'processing'
+                }
             )
             
             # Validate email
@@ -104,7 +115,8 @@ def validate_bulk_emails(file_path: str) -> Dict[str, Any]:
             "invalid_count": invalid_count,
             "total_count": total_emails,
             "processing_time": processing_time,
-            "results": results
+            "results": results,
+            "state": "SUCCESS"
         }
     except Exception as e:
         logger.error(f"Error in validate_bulk_emails: {str(e)}")
@@ -117,5 +129,6 @@ def validate_bulk_emails(file_path: str) -> Dict[str, Any]:
         
         return {
             "status": "failed",
-            "error": str(e)
+            "error": str(e),
+            "state": "FAILURE"
         }
