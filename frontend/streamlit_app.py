@@ -4,7 +4,6 @@ import pandas as pd
 import time
 from datetime import datetime
 import io
-import pyperclip
 import tempfile
 import os
 from typing import Dict, Any
@@ -410,5 +409,5 @@ Validation Details:
 - Typo Detection: {'❌' if result['typo_detection'] else '✅'}
 - Bounce Risk: {'❌' if result['bounce_risk'] else '✅'}
 """
-            pyperclip.copy(result_text)
+            st.code(result_text)
             st.success("Results copied to clipboard!")
