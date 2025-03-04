@@ -68,16 +68,15 @@ class RateLimiter:
     def is_rate_limited(self, client_ip: str) -> bool:
         now = datetime.now()
         window_start = now - timedelta(seconds=self.time_window)
-        
-        # Clean old calls
-        self.calls[client_ip] = [call_time for call_time in self.calls[client_ip] 
-                               if call_time > window_start]
-        
-        # Check if rate limited
+
+        # Remove old requests
+        self.calls[client_ip] = [t for t in self.calls[client_ip] if t > window_start]
+
+        # Check if the client exceeded the limit
         if len(self.calls[client_ip]) >= self.calls_limit:
             return True
         
-        # Add new call
+        # Add this request to history *only if allowed*
         self.calls[client_ip].append(now)
         return False
 
@@ -149,37 +148,34 @@ async def upload_file(file: UploadFile = File(...)):
 async def get_results(task_id: str):
     try:
         task_result = AsyncResult(task_id)
+
         if task_result is None:
-            return {
-                "status": "failed",
-                "error": "Task not found"
-            }
-            
+            return {"status": "failed", "error": "Task not found"}
+        
         if task_result.ready():
             if task_result.successful():
                 result = task_result.get()
                 if result is None:
-                    return {
-                        "status": "failed",
-                        "error": "Task result is empty"
-                    }
+                    return {"status": "failed", "error": "Task result is empty"}
                 return result
             else:
-                return {
-                    "status": "failed",
-                    "error": str(task_result.result)
-                }
-        else:
+                return {"status": "failed", "error": str(task_result.result)}
+
+        # Prevent infinite loops by returning an explicit "waiting" state
+        if task_result.state == "PENDING":
+            return {"status": "waiting", "message": "Task is still in queue. Try again later."}
+
+        if task_result.info:
             return {
                 "status": "processing",
-                "current": task_result.info.get("current", 0) if task_result.info else 0,
-                "total": task_result.info.get("total", 0) if task_result.info else 0
+                "current": task_result.info.get("current", 0),
+                "total": task_result.info.get("total", 0)
             }
+        else:
+            return {"status": "processing", "message": "Task is in progress."}
+
     except Exception as e:
-        return {
-            "status": "failed",
-            "error": f"Error getting results: {str(e)}"
-        }
+        return {"status": "failed", "error": f"Error getting results: {str(e)}"}
 
 @app.post("/validate-single/")
 async def validate_single_email(email: str = Form(...)):
