@@ -14,9 +14,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize Celery
-celery_app = Celery('tasks', broker=os.getenv('REDIS_URL', 'redis://localhost:6379/0'))
-celery_app = Celery('tasks', broker="redis-18132.c8.us-east-1-4.ec2.redns.redis-cloud.com:18132", backend="redis-18132.c8.us-east-1-4.ec2.redns.redis-cloud.com:18132")
-
+celery_app = Celery('tasks', broker=os.getenv('REDIS_URL'))
 
 # Configure Celery
 celery_app.conf.update(
